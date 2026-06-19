@@ -101,9 +101,6 @@ This repository contains the weekly implementations, codes, and projects develop
 | Noisy data / many irrelevant features | **Random Forest** |
 | Squeezing maximum accuracy on clean tabular data | **XGBoost** |
 | Missing values in raw data | **XGBoost** (handles natively) |
-| Need built-in L1/L2 regularisation | **XGBoost** |
-| Competition / structured data benchmark tasks | **XGBoost** (or LightGBM) |
-
 ---
 
 ### 🛠️ Week 3: Feature Engineering & Selection (Placeholder)

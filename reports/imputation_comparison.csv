@@ -1,0 +1,5 @@
+Strategy,Rows_Kept,Remaining_NaN
+Drop Rows,8991,0
+Forward Fill,9357,0
+Rolling Mean,9357,337
+Median,9357,0

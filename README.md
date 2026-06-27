@@ -106,9 +106,118 @@ This repository contains the weekly implementations, codes, and projects develop
 
 ---
 
-### 🛠️ Week 3: Feature Engineering & Selection (Placeholder)
-- **Focus**: Feature creation, handling missing values, selecting important features.
-- **Files**: *To be updated*
+### 🛠️ Week 3: Real-World Sensor Data — UCI Air Quality
+
+- **Focus**: Non-standard CSV parsing, sentinel value handling, imputation strategies, time-series data leakage, cyclical feature engineering.
+- **Files**:
+  - [week3_sensor_pipeline.py](./week3_sensor_pipeline.py): Full pipeline covering Days 11–15.
+- **Dataset**: [UCI Air Quality Dataset](https://archive.ics.uci.edu/dataset/360/air+quality) — 9,357 hourly records from metal-oxide chemical sensors in an Italian city (Mar 2004 – Apr 2005).
+- **Key Concepts**: European CSV formatting · Sensor failure sentinel values (`-200`) · Imputation trade-offs · Chronological train/test split · Cyclical time encoding · Data leakage detection
+
+#### Day 11 — Data Ingestion & Schema Cleaning
+- Demonstrated that a naïve `pd.read_csv()` silently misparses the file (produces 1 garbled column instead of 15) because the dataset uses **semicolons** (`;`) as delimiters and **commas** (`,`) as decimal separators (European convention).
+- Correct parse: `pd.read_csv("AirQualityUCI.csv", sep=';', decimal=',')`
+- **Runtime Results**: Broken shape `(9471, 1)` → Correct shape `(9357, 15)` with proper numeric dtypes.
+- Mapped all 15 columns to physical meanings: 5 ground-truth chemical concentrations, 5 raw sensor resistances, temperature (T), relative humidity (RH), and absolute humidity (AH).
+
+#### Day 12 — EDA on Sensor Data
+- Created a datetime index spanning `2004-03-10 18:00` → `2005-04-04 14:00`.
+- Plotted raw benzene concentration and all sensor channels over time.
+- **Key Observations**:
+  - Sharp downward spikes to `-200` are visible across many channels — these are sensor-failure sentinel values, not real measurements.
+  - A gas sensor cannot produce a negative concentration reading; `-200` is a manufacturer-designated error code.
+  - Daily (diurnal) patterns are visible: benzene peaks during morning and evening traffic rush hours.
+
+#### Day 13 — Missing Value Handling
+- Replaced all `-200` sentinel values with `NaN`.
+- **Missingness Report**:
+
+  | Column | % NaN |
+  |---|---|
+  | NMHC(GT) | 90.2% |
+  | CO(GT) | 18.0% |
+  | NO2(GT), NOx(GT) | 17.5% |
+  | All sensor channels (PT08.*), T, RH, AH | 3.9% |
+
+- Compared three imputation strategies on `PT08.S1(CO)`:
+
+  | Strategy | Rows Kept | NaN Remaining |
+  |---|---|---|
+  | Drop NaN rows | 8,991 | 0 |
+  | Forward-fill | 9,357 | 0 |
+  | Rolling mean (w=3) | 9,357 | 337 |
+
+  → Dropping loses 366 rows (3.9% of data).
+
+- **Trade-offs**:
+  - *Dropping rows*: loses data and introduces gaps in the time series.
+  - *Forward-fill*: simple but propagates stale values, artificially smoothing real pollution events.
+  - *Rolling mean*: more representative but assumes local continuity that may not exist during rapid pollution spikes.
+- Applied `ffill()` + `bfill()` for downstream modelling → **0 NaN remaining**.
+
+#### Day 14 — Temporal Splitting & Feature Engineering
+- **Why random splitting is wrong**: shuffling rows leaks future observations into the training set, inflating test performance by measuring *interpolation* rather than *generalisation*.
+- **Chronological split (80/20)**:
+  - Training period: `2004-03-10 18:00` → `2005-01-16 14:00` (7,485 rows)
+  - Test period: `2005-01-16 15:00` → `2005-04-04 14:00` (1,872 rows)
+- **Cyclical hour encoding**: `Hour_sin = sin(2π × Hour / 24)`, `Hour_cos = cos(2π × Hour / 24)` — ensures Hour 23 is adjacent to Hour 0 on the unit circle.
+
+#### Day 15 — Modelling & Data-Leakage Experiment
+- Trained `RandomForestRegressor(n_estimators=100)` on both temporal and random splits.
+- **Runtime Results**:
+
+  | Split Strategy | Train R² | Test R² | Test RMSE | Test MAE | Honest? |
+  |---|---|---|---|---|---|
+  | Temporal (chronological) | 0.9999 | 0.9999 | 0.0458 | 0.0128 | ✅ Yes |
+  | Random shuffle | 0.9999 | 0.9999 | 0.0927 | 0.0147 | ❌ No |
+
+- **Note**: Both R² values are ~0.9999 because `PT08.S2(NMHC)` (the titania sensor) has a near-perfect chemical correlation with benzene — it alone accounts for 99.96% of feature importance. The leakage effect is visible in RMSE: the temporal model has **2× lower RMSE** (0.0458 vs 0.0927) than the shuffled model, meaning the honest temporal model actually generalises *better*.
+
+- **Top Feature Importances** (temporal model):
+
+  | Feature | Importance |
+  |---|---|
+  | PT08.S2(NMHC) | 0.9996 |
+  | AH | 0.0001 |
+  | Hour_cos | 0.0001 |
+  | PT08.S3(NOx) | 0.0001 |
+  | PT08.S1(CO) | 0.0001 |
+
+- Generated 6 plots in `plots/`:
+  - `week3_raw_benzene.png` — Raw benzene concentration time series
+  - `week3_raw_sensors.png` — All sensor channels with -200 spikes
+  - `week3_imputation_comparison.png` — Side-by-side imputation strategies
+  - `week3_cyclical_hours.png` — Sin/cos encoding + unit circle visualisation
+  - `week3_feature_importance.png` — RandomForest feature importances
+  - `week3_actual_vs_predicted.png` — Temporal vs random split scatter plots
+
+### 📝 Week 3 Discussion & Reflection
+
+#### Discussion Questions
+
+**Q: What does the `-200` value represent physically? Can a gas sensor ever genuinely read a negative concentration?**
+
+**A:** No. A gas sensor measures resistance changes caused by gas molecules adsorbing onto a metal-oxide surface — this always produces a positive electrical signal. A concentration of `-200 μg/m³` is physically impossible. The value `-200` is a **manufacturer-designated error code** (sentinel value) indicating that the sensor was malfunctioning, uncalibrated, or reporting an out-of-range reading at that time. Treating these as real numbers would corrupt any analysis (e.g., pulling the mean downward, confusing regression models).
+
+**Q: Why is the R² so high (~0.9999) for both splits?**
+
+**A:** The `PT08.S2(NMHC)` sensor (a titania metal-oxide sensor targeting Non-Methane Hydrocarbons) has an extremely strong chemical cross-sensitivity to benzene. In urban air, benzene is a dominant NMHC component, so the sensor response is nearly a direct proxy for benzene concentration. This results in a near-perfect R² regardless of split strategy. However, the **RMSE** reveals the difference: the temporal split (0.0458) outperforms the shuffled split (0.0927) by 2×, showing that even with a dominant feature, honest temporal evaluation matters.
+
+#### Reflection
+
+**Your colleague runs `train_test_split(shuffle=True)` on sensor data and reports R² = 0.92. Your temporal split gives R² = 0.76. Who has the better model? Who has the better number?**
+
+**Answer:** Your colleague has the **better number** — but you have the **better model**.
+
+The R² = 0.92 from a random shuffle is *inflated by data leakage*. When time-series data is shuffled, the model sees observations from 2 PM and 4 PM in training, then is asked to predict 3 PM in testing. It learns to *interpolate* — trivially filling in gaps between known neighbours — rather than to *extrapolate* forward in time, which is what deployment requires.
+
+Your R² = 0.76 from a chronological split is an **honest estimate** of how the model will perform on genuinely unseen future data. In production, the model will never have access to tomorrow's readings to help predict today's. The temporal split simulates exactly this constraint.
+
+In practice:
+- The shuffled model may crash to R² ≈ 0.76 (or worse) when deployed.
+- Your model will perform close to R² ≈ 0.76 in deployment — no unpleasant surprises.
+
+**The best model is the one whose offline evaluation matches its real-world performance.** A flattering number on a leaky split is worse than useless — it gives false confidence and can lead to costly deployment failures.
 
 ---
 

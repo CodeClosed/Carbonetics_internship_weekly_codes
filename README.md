@@ -218,6 +218,100 @@ In practice:
 
 ---
 
-### 🚀 Week 4: Model Deployment & Integration (Placeholder)
-- **Focus**: Packaging model pipelines, API creation, or integration.
-- **Files**: *To be updated*
+### ⚖️ Week 4: Classification & Class Imbalance — AI4I Predictive Maintenance
+
+- **Focus**: Binary classification on severely imbalanced data. Evaluation beyond accuracy, imbalance-handling strategies, stratified cross-validation.
+- **Files**:
+  - [week4_classification.py](./week4_classification.py): Full pipeline covering Days 16–20.
+- **Dataset**: [AI4I 2020 Predictive Maintenance Dataset](https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset) — 10,000 records of machine sensor readings with binary failure labels. Failures represent only 3.39% of records.
+- **Key Concepts**: Class imbalance · Accuracy trap · Precision / Recall / F1-Score · ROC-AUC · `class_weight='balanced'` · SMOTE oversampling · Stratified K-Fold CV
+
+#### Day 16 — Load Dataset & EDA
+- Loaded `ai4i2020.csv`: shape `(10000, 14)`, zero null values.
+- **Class Distribution**:
+
+  | Label | Count | Proportion |
+  |---|---|---|
+  | No Failure (0) | 9,661 | 96.61% |
+  | Failure (1) | 339 | 3.39% |
+
+- Generated boxplots of 5 physical features (`Air temperature [K]`, `Process temperature [K]`, `Rotational speed [rpm]`, `Torque [Nm]`, `Tool wear [min]`) split by failure label → `plots/week4_feature_boxplots.png`.
+- **Domain context**: In a real plant, a missed failure prediction has safety and cost consequences — Recall for the Failure class matters most.
+
+#### Day 17 — Why Accuracy Is Misleading
+- Stratified 80/20 train/test split (8,000 train / 2,000 test); failure rate preserved at ~3.4% in both sets.
+- **Trivial baseline** (always predict "No Failure"): accuracy = **96.6%** — but Failure Recall = **0.000**.
+- The trivial baseline misses *every single failure*. Accuracy alone is meaningless on imbalanced data.
+- **Metric definitions**:
+  - Precision = TP / (TP + FP) — "Of predicted failures, how many are real?"
+  - Recall = TP / (TP + FN) — "Of real failures, how many did we catch?"
+  - F1-Score = 2 × (P × R) / (P + R) — harmonic mean balancing both
+
+#### Day 18 — Three Imbalance Strategies
+- Trained `RandomForestClassifier(n_estimators=100)` under three configurations:
+
+  | Strategy | Precision (Fail) | Recall (Fail) | F1 (Fail) | Accuracy |
+  |---|---|---|---|---|
+  | No adjustment (baseline) | **0.896** | 0.632 | **0.741** | 0.985 |
+  | `class_weight='balanced'` | 0.886 | 0.574 | 0.696 | 0.983 |
+  | SMOTE oversampling | 0.434 | **0.779** | 0.558 | 0.958 |
+
+- **SMOTE resampling**: Before — {0: 7729, 1: 271}; After — {0: 7729, 1: 7729} (perfectly balanced training set).
+- **Trade-off observed**: SMOTE produces the highest Recall (0.779) — it catches 78% of failures — but at the cost of low Precision (0.434), meaning many false alarms. The unweighted baseline achieves the best F1 (0.741) with strong Precision but lower Recall. There is a clear Precision–Recall trade-off.
+- Generated comparative bar chart → `plots/week4_strategy_comparison.png`.
+
+#### Day 19 — Stratified Cross-Validation
+- 5-fold `StratifiedKFold` with `class_weight='balanced'` RF:
+
+  | Fold | F1 (Failure class) |
+  |---|---|
+  | 1 | 0.673 |
+  | 2 | 0.673 |
+  | 3 | 0.648 |
+  | 4 | 0.655 |
+  | 5 | 0.610 |
+  | **Mean ± Std** | **0.652 ± 0.023** |
+
+- Low standard deviation (0.023) indicates stable performance across folds — the model generalises consistently.
+
+#### Day 20 — Final Deliverable
+
+- **Final summary table**:
+
+  | Model | Accuracy | F1 (Fail) | Recall (Fail) | Precision (Fail) |
+  |---|---|---|---|---|
+  | Trivial (all 0) | 0.966 | 0.000 | 0.000 | 0.000 |
+  | RF Baseline | **0.985** | **0.741** | 0.632 | **0.896** |
+  | RF class_weight | 0.983 | 0.696 | 0.574 | 0.886 |
+  | RF + SMOTE | 0.958 | 0.558 | **0.779** | 0.434 |
+
+- Generated plots:
+  - `week4_confusion_matrix.png` — Confusion matrix for the balanced-weight model
+  - `week4_roc_curve.png` — ROC curve with AUC
+
+### 📝 Week 4 Discussion & Reflection
+
+#### Discussion Questions
+
+**Q: Your model has 97% accuracy and your manager is impressed. What do you say?**
+
+**A:** "97% accuracy is misleading on this dataset. Since failures are only ~3.4% of the data, a model that *never* predicts failure already achieves 96.6% accuracy — and it catches zero failures. What matters is whether our model actually detects failures when they happen."
+
+Walk through the confusion matrix:
+- **True Negatives** (top-left): correctly identified healthy machines — good.
+- **False Positives** (top-right): false alarms — unnecessary inspections, but cheap.
+- **False Negatives** (bottom-left): **missed failures** — the dangerous quadrant. These cause equipment damage, production downtime, or safety hazards.
+- **True Positives** (bottom-right): correctly caught failures — the whole point of the model.
+
+The right metric is **Recall** (what fraction of real failures did we catch?) balanced against **Precision** (are we raising too many false alarms?). The **F1-Score** combines both.
+
+**Q: Which strategy would you deploy and why?**
+
+**A:** The choice depends on the operational context:
+- If **minimising missed failures** is paramount (safety-critical), choose **SMOTE** — it catches 78% of failures, but generates many false alarms.
+- If **balancing detection with false alarm cost**, choose the **unweighted baseline** — it has the best F1 (0.741) with 90% precision and 63% recall.
+- In practice, you would tune the **decision threshold** on the probability output rather than relying on a single strategy, using the ROC curve to find the optimal operating point for your cost structure.
+
+#### Reflection
+
+**A single number never tells the whole story.** On imbalanced data, accuracy is dominated by the majority class. Always examine the confusion matrix, per-class metrics, and the ROC curve. In predictive maintenance, the cost asymmetry — a missed failure vs. an unnecessary inspection — should directly inform which metric you optimise for.
